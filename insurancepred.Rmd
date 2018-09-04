@@ -1,0 +1,211 @@
+---
+title: "Insurance Prediction"
+author: "krishna"
+date: "18 March 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(tree)
+library(randomForest)
+library(caret)
+
+ins=read.csv("C:\\Users\\Administrator\\Downloads\\insurance\\insurance.csv")
+
+```
+
+###To find the number of missing values
+```{r}
+colSums(is.na(ins))
+str(ins)
+```
+
+
+###insurance claims is maximum in which region
+```{r}
+ins %>% group_by(region) %>% summarise(charges_paid=sum(charges)) %>% ggplot(aes(x=region,y=charges_paid))+geom_bar(stat = "identity",fill="steel blue")
+```
+
+
+
+
+
+###smokers
+```{r}
+ins %>% group_by(sex,region) %>% summarise(smokers=sum(smoker=="yes")) %>% ggplot(aes(x=region,y=smokers,fill=sex))+geom_bar(stat = "identity",position = "dodge")
+```
+
+
+
+###converting yes and no into numeric
+```{r}
+ins$smoker_num=ifelse(ins$smoker=="yes",1,0)
+ins$smoker_num=as.factor(ins$smoker_num)
+```
+
+###correlation between different categories
+```{r}
+ins1=ins %>% select(-sex,-region,-smoker)
+ins1 = ins %>% select(age, bmi, children, smoker_num, charges)
+ins1$smoker_num=as.numeric(ins1$smoker_num)
+corrplot(cor(ins1), method= "pie")
+
+
+
+```
+
+
+###smoker vs non smoker
+```{r}
+ggplot(data=ins,aes(x=smoker,y=charges,fill=smoker)) + geom_boxplot()
+```
+
+###concentration of smokers vs non smokers by region
+```{r}
+ins$smokers_vs_non=ifelse(ins$smoker_num==0,-1,1)
+ggplot(data=ins,aes(x=region,y=smokers_vs_non))+geom_bar(stat='identity', aes(fill=smokers_vs_non))
+```
+
+###charges by different age group
+```{r}
+ins %>% group_by(sex,age) %>% summarise(total=sum(charges)) %>% ggplot(aes(x=age,y=total,col=sex))+geom_jitter(aes(size=total))
+```
+
+
+
+
+###charges based on bmi
+```{r,warning=F}
+
+for (i in 1:nrow(ins)) {
+  if(ins$bmi[i]<18){
+  ins$bmi_type[i] = "underweight"
+}else if(ins$bmi[i]>30){
+      ins$bmi_type[i] = "overweight"
+}else{
+       ins$bmi_type[i] = "normal"
+}
+}
+
+ggplot(ins,aes(x=bmi_type,y=charges))+geom_boxplot(aes(fill=bmi_type))
+```
+
+
+###charges based on no of children
+```{r}
+ggplot(data = ins,aes(x=as.factor(children),y=charges))+geom_boxplot(aes(fill=children))
+```
+###charges based on age
+```{r}
+bins=cut(ins$age,breaks = 6)
+ggplot(ins,aes(x=bins,y=charges))+geom_boxplot(aes(fill=bins))
+```
+
+```{r}
+ins %>% select(age,charges) %>% ggplot(aes(x=age,y=charges))+geom_point()
+
+```
+
+
+### Linear regression ###
+```{r}
+ins$smoker_num=ifelse(ins$smoker=="yes",1,0)
+ins1=ins %>% select(-sex,-region,-smoker)
+ins1 = ins %>% select(age, bmi, children, smoker_num, charges)
+
+ins1$child_cat = as.factor(ins1$children)
+
+ins2 = ins1
+ins_training=ins2[sample(1:1338,0.85*nrow(ins2)),]
+ins_testing=ins2[sample(1:1338,0.15*nrow(ins2)),]
+
+
+m1 = lm(charges~., data=ins_training %>% filter(smoker_num==0 ) %>% select(-smoker_num))
+m2 = lm(charges~., data=ins_training %>% filter(smoker_num==1 ) %>% select(-smoker_num))
+
+
+ins_testing$pred_hybrid = ifelse(ins_testing$smoker_num==0 ,
+                          m1$coefficients[1]+ 
+                          m1$coefficients[2]*ins_testing$age+ 
+                          m1$coefficients[3]*ins_testing$bmi +
+                          m1$coefficients[4]*ins_testing$children ,
+                          
+                          m2$coefficients[1]+
+                          m2$coefficients[2]*ins_testing$age+
+                          m2$coefficients[3]*ins_testing$bmi +
+                          m2$coefficients[4]*ins_testing$children)
+
+{{plot(ins_testing$charges, type='l')
+  lines(ins_testing$pred_hybrid, col='red')}}
+
+RMSE(ins_testing$charges, ins_testing$pred_hybrid)
+
+```
+
+### Linear regression with scaled data ###
+```{r,warning=F}
+ins2 = ins1 
+
+s_dev=sd(ins2$charges)
+mean_val=mean(ins2$charges)
+
+ins2$bmi = scale(ins2$bmi)
+ins2$charges=scale(ins2$charges)
+ins_training=ins2[sample(1:1338,0.85*nrow(ins2)),]
+ins_testing=ins2[sample(1:1338,0.15*nrow(ins2)),]
+
+linear_model=lm(charges~.,data=ins_training)
+
+ins_testing$pred_ins=predict(linear_model,ins_testing)
+
+ins_testing$charges=(ins_testing$charges*s_dev)+mean_val
+ins_testing$pred_ins=(ins_testing$pred_ins*s_dev)+mean_val
+
+{{plot(ins_testing$charges,type = "l")
+  lines(ins_testing$pred_ins,type = "l",col ="red")
+}}
+
+RMSE(ins_testing$charges, ins_testing$pred_ins)
+
+```
+
+
+### Decision tree to identify the factor which is affecting the most ###
+```{r}
+ins2 = ins1
+ins_training=ins2[sample(1:1338,0.85*nrow(ins2)),]
+ins_testing=ins2[sample(1:1338,0.15*nrow(ins2)),]
+
+mod=tree(charges~.,data=ins_training)
+
+ins_testing$pred=predict(mod,ins_testing)
+
+{{plot(ins_testing$charges,type = "l",col = "blue")
+lines(ins_testing$pred, type = "l",col ="red")}}
+RMSE(ins_testing$pred,ins_testing$charges)
+
+```
+
+### Random forest ###
+```{r}
+ins2 = ins1
+ins_training=ins2[sample(1:1338,0.85*nrow(ins2)),]
+ins_testing=ins2[sample(1:1338,0.15*nrow(ins2)),]
+
+mod=randomForest(charges~.,data=ins_training,ntree=500,mtry =3)
+
+ins_testing$pred=predict(mod,ins_testing)
+
+
+{{plot(ins_testing$charges,type = "l")
+  lines(ins_testing$pred,type = "l",col ="red")
+}}
+RMSE(ins_testing$pred,ins_testing$charges)
+```
+
+
+

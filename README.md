@@ -1,2 +1,2 @@
 # Medical-Cost-Personal-Datasets
-Insurance Forecast by using Linear Regression
+Insurance Forecast by using Linear Regression.
